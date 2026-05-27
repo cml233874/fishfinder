@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>🐟 AI Fish Finder — Three Kings</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'Helvetica Neue', Arial, sans-serif; background: #1a1a2e; color: #eee; }
+#map { width: 100%; height: 100vh; }
+
+/* 控制面板 */
+.panel {
+    position: absolute; top: 10px; right: 10px; z-index: 1000;
+    background: rgba(20,20,40,0.92); border-radius: 12px;
+    padding: 14px 16px; min-width: 260px; max-width: 320px;
+    backdrop-filter: blur(10px); box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    font-size: 13px; max-height: 90vh; overflow-y: auto;
+}
+.panel h2 { font-size: 16px; margin-bottom: 8px; color: #ffd700; }
+.panel h3 { font-size: 13px; margin: 10px 0 4px; color: #aaa; text-transform: uppercase; letter-spacing: 1px; }
+.stat-row { display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
+.stat-label { color: #888; }
+.stat-val { font-weight: 600; }
+.species-row { padding: 3px 0; display: flex; justify-content: space-between; }
+.species-ok { color: #4caf50; }
+.species-no { color: #666; }
+
+/* 图层控制 */
+.layer-toggle { padding: 6px 0; display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.layer-toggle input { accent-color: #ffd700; }
+.layer-toggle label { cursor: pointer; }
+
+/* 滑块 */
+.slider-row { padding: 4px 0; }
+.slider-row input[type=range] { width: 100%; accent-color: #ffd700; }
+.slider-label { font-size: 11px; color: #888; }
+
+/* 热点列表 */
+.hotspot-item {
+    padding: 6px 8px; margin: 3px 0; border-radius: 6px;
+    background: rgba(255,255,255,0.05); cursor: pointer;
+    transition: background 0.2s;
+}
+.hotspot-item:hover { background: rgba(255,215,0,0.15); }
+.hotspot-rank { color: #ffd700; font-weight: 700; font-size: 15px; }
+.hotspot-detail { font-size: 11px; color: #999; }
+
+/* 色标 */
+.colorbar {
+    position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
+    z-index: 1000; background: rgba(20,20,40,0.85); border-radius: 8px;
+    padding: 8px 16px; display: flex; align-items: center; gap: 8px;
+    backdrop-filter: blur(8px);
+}
+.colorbar-gradient {
+    width: 200px; height: 14px; border-radius: 3px;
+    background: linear-gradient(to right, #313695, #4575b4, #74add1, #abd9e9, #ffffbf, #fee090, #fdae61, #f46d43, #d73027, #a50026);
+}
+.colorbar-label { font-size: 11px; color: #ccc; }
+
+/* 搜索区域信息 */
+.info-badge {
+    position: absolute; top: 10px; left: 60px; z-index: 1000;
+    background: rgba(20,20,40,0.85); border-radius: 8px;
+    padding: 8px 14px; font-size: 12px; backdrop-filter: blur(8px);
+}
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div class="info-badge" id="dateBadge">加载中...</div>
+
+<div class="panel" id="panel">
+    <h2>🐟 AI Fish Finder</h2>
+    <div id="statsBox"></div>
+
+    <h3>图层控制</h3>
+    <div class="layer-toggle">
+        <input type="checkbox" id="togSST" checked>
+        <label for="togSST">SST 海温热力图</label>
+    </div>
+    <div class="slider-row">
+        <span class="slider-label">透明度</span>
+        <input type="range" id="sstOpacity" min="0" max="100" value="65">
+    </div>
+    <div class="layer-toggle">
+        <input type="checkbox" id="togIsotherm" checked>
+        <label for="togIsotherm">等温线</label>
+    </div>
+    <div class="layer-toggle">
+        <input type="checkbox" id="togHotspot" checked>
+        <label for="togHotspot">热点标注</label>
+    </div>
+    <div class="layer-toggle">
+        <input type="checkbox" id="togSeamap" checked>
+        <label for="togSeamap">OpenSeaMap 航海图</label>
+    </div>
+
+    <h3>鱼种适宜度</h3>
+    <div id="speciesBox"></div>
+
+    <h3>🎯 TOP 热点</h3>
+    <div id="hotspotList"></div>
+</div>
+
+<div class="colorbar">
+    <span class="colorbar-label" id="cbMin">17°C</span>
+    <div class="colorbar-gradient"></div>
+    <span class="colorbar-label" id="cbMax">20°C</span>
+    <span class="colorbar-label" style="margin-left:8px">SST</span>
+</div>
+
+<script>
+// ── 地图初始化 ──
+const map = L.map('map', {
+    center: [-34.5, 172.5],
+    zoom: 8,
+    zoomControl: true,
+});
+
+// 底图: CartoDB dark (海洋用暗色好看)
+const baseDark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; CartoDB &copy; OSM',
+    maxZoom: 18,
+}).addTo(map);
+
+// OpenSeaMap叠加
+const seamap = L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenSeaMap',
+    maxZoom: 18,
+    opacity: 0.8,
+}).addTo(map);
+
+// ── 图层组 ──
+let sstLayer = L.layerGroup().addTo(map);
+let isothermLayer = L.layerGroup().addTo(map);
+let hotspotLayer = L.layerGroup().addTo(map);
+let landmarkLayer = L.layerGroup().addTo(map);
+
+// ── 颜色映射 ──
+function sstColor(t, min, max) {
+    // RdYlBu_r colorscale
+    const colors = [
+        [49,54,149],[69,117,180],[116,173,209],[171,217,233],
+        [255,255,191],[254,224,144],[253,174,97],[244,109,67],
+        [215,48,39],[165,0,38]
+    ];
+    let frac = (t - min) / (max - min);
+    frac = Math.max(0, Math.min(1, frac));
+    const idx = frac * (colors.length - 1);
+    const lo = Math.floor(idx), hi = Math.min(lo + 1, colors.length - 1);
+    const f = idx - lo;
+    const r = Math.round(colors[lo][0] * (1-f) + colors[hi][0] * f);
+    const g = Math.round(colors[lo][1] * (1-f) + colors[hi][1] * f);
+    const b = Math.round(colors[lo][2] * (1-f) + colors[hi][2] * f);
+    return `rgb(${r},${g},${b})`;
+}
+
+// ── 加载数据 ──
+let DATA = null;
+
+fetch('data.json')
+.then(r => r.json())
+.then(data => {
+    DATA = data;
+    render(data);
+})
+.catch(e => {
+    document.getElementById('dateBadge').textContent = '❌ 无法加载 data.json';
+    console.error(e);
+});
+
+function render(d) {
+    // Date badge
+    document.getElementById('dateBadge').innerHTML =
+        `📅 ${d.date} | 🌡 ${d.stats.sst_min}-${d.stats.sst_max}°C | ${d.stats.total_points} pts`;
+
+    // Colorbar
+    document.getElementById('cbMin').textContent = d.stats.sst_min + '°C';
+    document.getElementById('cbMax').textContent = d.stats.sst_max + '°C';
+
+    // Stats
+    document.getElementById('statsBox').innerHTML = `
+        <div class="stat-row"><span class="stat-label">日期</span><span class="stat-val">${d.date}</span></div>
+        <div class="stat-row"><span class="stat-label">水温范围</span><span class="stat-val">${d.stats.sst_min} - ${d.stats.sst_max}°C</span></div>
+        <div class="stat-row"><span class="stat-label">平均水温</span><span class="stat-val">${d.stats.sst_mean}°C</span></div>
+        <div class="stat-row"><span class="stat-label">网格</span><span class="stat-val">${d.stats.grid_size} (${d.stats.total_points}点)</span></div>
+    `;
+
+    // Species
+    let shtml = '';
+    d.species.forEach(sp => {
+        const cls = sp.coverage_pct > 0 ? 'species-ok' : 'species-no';
+        const icon = sp.coverage_pct > 10 ? '✅' : sp.coverage_pct > 0 ? '⚠️' : '❌';
+        shtml += `<div class="species-row ${cls}">
+            <span>${icon} ${sp.cn} ${sp.name}</span>
+            <span>${sp.coverage_pct}%</span>
+        </div>`;
+    });
+    document.getElementById('speciesBox').innerHTML = shtml;
+
+    // SST grid overlay
+    renderSST(d);
+
+    // Isotherms
+    renderIsotherms(d);
+
+    // Landmarks
+    renderLandmarks(d);
+
+    // Hotspots
+    renderHotspots(d);
+}
+
+function renderSST(d) {
+    sstLayer.clearLayers();
+    const min = d.stats.sst_min, max = d.stats.sst_max;
+    const opacity = document.getElementById('sstOpacity').value / 100;
+
+    // 计算格子大小
+    const dLat = d.lats.length > 1 ? Math.abs(d.lats[1] - d.lats[0]) : 0.05;
+    const dLon = d.lons.length > 1 ? Math.abs(d.lons[1] - d.lons[0]) : 0.05;
+
+    d.sst_points.forEach(p => {
+        const bounds = [
+            [p.lat - dLat/2, p.lon - dLon/2],
+            [p.lat + dLat/2, p.lon + dLon/2]
+        ];
+        const rect = L.rectangle(bounds, {
+            color: 'none',
+            fillColor: sstColor(p.sst, min, max),
+            fillOpacity: opacity,
+            weight: 0,
+        });
+        rect.bindPopup(`
+            <b>🌡 ${p.sst}°C</b><br>
+            评分: ${p.score}<br>
+            梯度: ${p.grad.toFixed(3)}°C/grid<br>
+            (${p.lat.toFixed(2)}, ${p.lon.toFixed(2)})
+        `);
+        sstLayer.addLayer(rect);
+    });
+}
+
+function renderIsotherms(d) {
+    isothermLayer.clearLayers();
+    d.isotherms.forEach(iso => {
+        const latlngs = iso.coords.map(c => [c[1], c[0]]); // [lat, lon]
+        const line = L.polyline(latlngs, {
+            color: '#fff',
+            weight: 1.5,
+            opacity: 0.7,
+            dashArray: '6,4',
+        });
+        // 添加温度标签
+        if (latlngs.length > 3) {
+            const mid = latlngs[Math.floor(latlngs.length / 2)];
+            const label = L.marker(mid, {
+                icon: L.divIcon({
+                    className: '',
+                    html: `<span style="color:#fff;font-size:10px;font-weight:bold;
+                           text-shadow:1px 1px 2px #000,-1px -1px 2px #000;
+                           white-space:nowrap">${iso.temp}°C</span>`,
+                    iconSize: [40, 14],
+                    iconAnchor: [20, 7],
+                }),
+                interactive: false,
+            });
+            isothermLayer.addLayer(label);
+        }
+        isothermLayer.addLayer(line);
+    });
+}
+
+function renderLandmarks(d) {
+    landmarkLayer.clearLayers();
+    for (const [name, info] of Object.entries(d.landmarks)) {
+        let iconHtml, iconSize;
+        if (name === 'Three Kings') {
+            iconHtml = `<div style="font-size:22px;text-shadow:0 0 6px rgba(255,0,0,0.8)">🎯</div>`;
+            iconSize = [26, 26];
+        } else if (info.icon === 'port') {
+            iconHtml = `<div style="font-size:18px">⚓</div>`;
+            iconSize = [22, 22];
+        } else {
+            iconHtml = `<div style="font-size:14px">📍</div>`;
+            iconSize = [18, 18];
+        }
+        const marker = L.marker([info.lat, info.lon], {
+            icon: L.divIcon({
+                className: '',
+                html: iconHtml,
+                iconSize: iconSize,
+                iconAnchor: [iconSize[0]/2, iconSize[1]/2],
+            }),
+            zIndexOffset: 1000,
+        });
+        marker.bindTooltip(name, {
+            permanent: name === 'Three Kings' || name === 'Mangonui',
+            direction: 'right',
+            offset: [12, 0],
+            className: '',
+        });
+        landmarkLayer.addLayer(marker);
+    }
+}
+
+function renderHotspots(d) {
+    hotspotLayer.clearLayers();
+    let listHtml = '';
+
+    d.hotspots.forEach(h => {
+        // 地图标注
+        const color = h.rank <= 3 ? '#ff4444' : '#ff8800';
+        const size = h.rank <= 3 ? 28 : 20;
+        const marker = L.marker([h.lat, h.lon], {
+            icon: L.divIcon({
+                className: '',
+                html: `<div style="
+                    width:${size}px;height:${size}px;
+                    background:${color};color:#fff;
+                    border-radius:50%;border:2px solid #fff;
+                    display:flex;align-items:center;justify-content:center;
+                    font-weight:700;font-size:${h.rank<=3?13:10}px;
+                    box-shadow:0 2px 8px rgba(0,0,0,0.5);
+                ">#${h.rank}</div>`,
+                iconSize: [size, size],
+                iconAnchor: [size/2, size/2],
+            }),
+            zIndexOffset: 2000 - h.rank,
+        });
+
+        const front = h.is_thermal_front ? '🌊 温度断层!' : '';
+        const species = h.species.map(s => `• ${s}`).join('<br>');
+
+        marker.bindPopup(`
+            <div style="min-width:180px">
+                <b style="font-size:15px;color:${color}">🎯 热点 #${h.rank}</b><br>
+                <hr style="border-color:#333;margin:4px 0">
+                🌡 SST: <b>${h.sst}°C</b><br>
+                📊 评分: <b>${h.score}</b>/100 ${front}<br>
+                📍 (${h.lat}, ${h.lon})<br>
+                📏 距TK: <b>${h.dist_tk_nm}nm</b><br>
+                ⚓ 距Mangonui: <b>${h.dist_mg_nm}nm</b><br>
+                <hr style="border-color:#333;margin:4px 0">
+                <b>适宜鱼种:</b><br>
+                ${species || '无匹配'}
+            </div>
+        `, {maxWidth: 250});
+
+        hotspotLayer.addLayer(marker);
+
+        // 侧边栏列表
+        listHtml += `
+            <div class="hotspot-item" onclick="map.flyTo([${h.lat},${h.lon}],10)">
+                <span class="hotspot-rank">#${h.rank}</span>
+                <span>${h.sst}°C</span>
+                <span style="color:#888">评分${h.score}</span>
+                <div class="hotspot-detail">
+                    距TK ${h.dist_tk_nm}nm | 距港${h.dist_mg_nm}nm
+                    ${h.is_thermal_front ? ' | 🌊断层' : ''}
+                </div>
+            </div>
+        `;
+    });
+
+    document.getElementById('hotspotList').innerHTML = listHtml;
+}
+
+// ── 图层开关 ──
+document.getElementById('togSST').onchange = function() {
+    this.checked ? map.addLayer(sstLayer) : map.removeLayer(sstLayer);
+};
+document.getElementById('togIsotherm').onchange = function() {
+    this.checked ? map.addLayer(isothermLayer) : map.removeLayer(isothermLayer);
+};
+document.getElementById('togHotspot').onchange = function() {
+    this.checked ? map.addLayer(hotspotLayer) : map.removeLayer(hotspotLayer);
+};
+document.getElementById('togSeamap').onchange = function() {
+    this.checked ? map.addLayer(seamap) : map.removeLayer(seamap);
+};
+
+// 透明度滑块
+document.getElementById('sstOpacity').oninput = function() {
+    if (DATA) renderSST(DATA);
+};
+</script>
+</body>
+</html>
