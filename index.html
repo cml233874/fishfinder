@@ -88,6 +88,20 @@ body { font-family: -apple-system, 'Helvetica Neue', Arial, sans-serif; backgrou
 }
 .colorbar-label { font-size: 11px; color: #ccc; }
 
+/* 定位按钮 */
+.locate-btn {
+    position: absolute; bottom: 80px; right: 16px; z-index: 1000;
+    width: 44px; height: 44px; border-radius: 50%;
+    background: rgba(20,20,40,0.92); border: 2px solid #4fc3f7;
+    color: #4fc3f7; font-size: 22px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    backdrop-filter: blur(10px); box-shadow: 0 2px 10px rgba(0,0,0,0.4);
+    transition: all 0.3s ease;
+}
+.locate-btn:hover { background: rgba(79,195,247,0.2); }
+.locate-btn.tracking { border-color: #4caf50; color: #4caf50; animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(76,175,80,0.4); } 50% { box-shadow: 0 0 0 10px rgba(76,175,80,0); } }
+
 /* 搜索区域信息 */
 .info-badge {
     position: absolute; top: 10px; left: 60px; z-index: 1000;
@@ -152,6 +166,8 @@ body { font-family: -apple-system, 'Helvetica Neue', Arial, sans-serif; backgrou
     <div id="hotspotList"></div>
 </div>
 
+<button class="locate-btn" id="locateBtn" onclick="toggleLocation()" title="实时定位">📍</button>
+
 <div class="colorbar">
     <span class="colorbar-label" id="cbMin">17°C</span>
     <div class="colorbar-gradient"></div>
@@ -160,6 +176,112 @@ body { font-family: -apple-system, 'Helvetica Neue', Arial, sans-serif; backgrou
 </div>
 
 <script>
+// ── 实时定位 ──
+let locMarker = null;
+let locCircle = null;
+let locWatchId = null;
+let locTracking = false;
+
+function toggleLocation() {
+    if (locTracking) {
+        stopLocation();
+    } else {
+        startLocation();
+    }
+}
+
+function startLocation() {
+    if (!navigator.geolocation) {
+        alert('浏览器不支持定位');
+        return;
+    }
+    const btn = document.getElementById('locateBtn');
+    btn.classList.add('tracking');
+    btn.innerHTML = '🟢';
+    locTracking = true;
+
+    locWatchId = navigator.geolocation.watchPosition(
+        function(pos) {
+            const lat = pos.coords.latitude;
+            const lon = pos.coords.longitude;
+            const acc = pos.coords.accuracy; // meters
+            const spd = pos.coords.speed; // m/s or null
+            const hdg = pos.coords.heading; // degrees or null
+
+            if (locMarker) {
+                locMarker.setLatLng([lat, lon]);
+                locCircle.setLatLng([lat, lon]);
+                locCircle.setRadius(acc);
+            } else {
+                locMarker = L.marker([lat, lon], {
+                    icon: L.divIcon({
+                        className: '',
+                        html: `<div style="
+                            width:18px;height:18px;background:#4fc3f7;
+                            border:3px solid #fff;border-radius:50%;
+                            box-shadow:0 0 10px rgba(79,195,247,0.8);
+                        "></div>`,
+                        iconSize: [18, 18],
+                        iconAnchor: [9, 9],
+                    }),
+                    zIndexOffset: 5000,
+                }).addTo(map);
+
+                locCircle = L.circle([lat, lon], {
+                    radius: acc,
+                    color: '#4fc3f7',
+                    weight: 1,
+                    fillColor: '#4fc3f7',
+                    fillOpacity: 0.1,
+                }).addTo(map);
+
+                map.flyTo([lat, lon], 10);
+            }
+
+            // 更新popup信息
+            let info = `<b>📍 当前位置</b><br>`;
+            info += `纬度: ${lat.toFixed(5)}<br>`;
+            info += `经度: ${lon.toFixed(5)}<br>`;
+            info += `精度: ±${Math.round(acc)}m<br>`;
+            if (spd !== null) info += `速度: ${(spd * 1.944).toFixed(1)} 节<br>`;
+            if (hdg !== null) info += `航向: ${Math.round(hdg)}°<br>`;
+
+            // 计算到各地标距离
+            if (DATA && DATA.landmarks) {
+                info += `<hr style="border-color:#333;margin:4px 0">`;
+                for (const [name, lm] of Object.entries(DATA.landmarks)) {
+                    const d = Math.sqrt(((lat-lm.lat)*60)**2 + ((lon-lm.lon)*60*Math.cos(lat*Math.PI/180))**2);
+                    info += `→ ${name}: <b>${d.toFixed(1)}nm</b><br>`;
+                }
+            }
+
+            locMarker.bindPopup(info, {maxWidth: 200});
+        },
+        function(err) {
+            alert('定位失败: ' + err.message);
+            stopLocation();
+        },
+        {
+            enableHighAccuracy: true,
+            maximumAge: 5000,
+            timeout: 15000,
+        }
+    );
+}
+
+function stopLocation() {
+    if (locWatchId !== null) {
+        navigator.geolocation.clearWatch(locWatchId);
+        locWatchId = null;
+    }
+    if (locMarker) { map.removeLayer(locMarker); locMarker = null; }
+    if (locCircle) { map.removeLayer(locCircle); locCircle = null; }
+    const btn = document.getElementById('locateBtn');
+    btn.classList.remove('tracking');
+    btn.innerHTML = '📍';
+    locTracking = false;
+}
+
 // ── 侧边栏收起/展开 ──
 function togglePanel(show) {
     const panel = document.getElementById('panel');
