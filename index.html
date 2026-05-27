@@ -151,6 +151,14 @@ body { font-family: -apple-system, 'Helvetica Neue', Arial, sans-serif; backgrou
         <input type="range" id="bathyOpacity" min="0" max="100" value="85">
     </div>
     <div class="layer-toggle">
+        <input type="checkbox" id="togChl">
+        <label for="togChl">🧪 叶绿素</label>
+    </div>
+    <div class="slider-row">
+        <span class="slider-label">叶绿素 透明度</span>
+        <input type="range" id="chlOpacity" min="0" max="100" value="60">
+    </div>
+    <div class="layer-toggle">
         <input type="checkbox" id="togSeamap" checked>
         <label for="togSeamap">OpenSeaMap 航海图</label>
     </div>
@@ -343,6 +351,7 @@ let isothermLayer = L.layerGroup().addTo(map);
 let hotspotLayer = L.layerGroup().addTo(map);
 let landmarkLayer = L.layerGroup().addTo(map);
 let bathyLayer = L.layerGroup().addTo(map);
+let chlLayer = L.layerGroup();
 
 // ── 颜色映射 ──
 function sstColor(t, min, max) {
@@ -415,6 +424,9 @@ function render(d) {
     // Bathymetry
     renderBathymetry(d);
 
+    // Chlorophyll
+    renderChlorophyll(d);
+
     // Landmarks
     renderLandmarks(d);
 
@@ -480,6 +492,45 @@ function renderIsotherms(d) {
             isothermLayer.addLayer(label);
         }
         isothermLayer.addLayer(line);
+    });
+}
+
+function chlColor(v) {
+    // Green colorscale: low=dark blue, mid=green, high=yellow-red
+    if (v <= 0.1) return 'rgba(10,10,80,0.7)';
+    if (v <= 0.2) return 'rgba(20,60,120,0.7)';
+    if (v <= 0.3) return 'rgba(20,100,80,0.7)';
+    if (v <= 0.5) return 'rgba(30,150,50,0.8)';
+    if (v <= 1.0) return 'rgba(80,180,30,0.8)';
+    if (v <= 2.0) return 'rgba(200,200,0,0.8)';
+    if (v <= 5.0) return 'rgba(255,140,0,0.9)';
+    return 'rgba(255,40,0,0.9)';
+}
+
+function renderChlorophyll(d) {
+    chlLayer.clearLayers();
+    if (!d.chlorophyll || d.chlorophyll.length === 0) return;
+    const opacity = document.getElementById('chlOpacity').value / 100;
+
+    // Estimate grid spacing from data
+    const latSet = [...new Set(d.chlorophyll.map(p => p.lat))].sort();
+    const lonSet = [...new Set(d.chlorophyll.map(p => p.lon))].sort();
+    const dLat = latSet.length > 1 ? Math.abs(latSet[1] - latSet[0]) : 0.083;
+    const dLon = lonSet.length > 1 ? Math.abs(lonSet[1] - lonSet[0]) : 0.083;
+
+    d.chlorophyll.forEach(p => {
+        const bounds = [
+            [p.lat - dLat/2, p.lon - dLon/2],
+            [p.lat + dLat/2, p.lon + dLon/2]
+        ];
+        const rect = L.rectangle(bounds, {
+            color: 'none',
+            fillColor: chlColor(p.chl),
+            fillOpacity: opacity,
+            weight: 0,
+        });
+        rect.bindPopup(`<b>🧪 ${p.chl.toFixed(3)} mg/m³</b><br>(${p.lat.toFixed(2)}, ${p.lon.toFixed(2)})`);
+        chlLayer.addLayer(rect);
     });
 }
 
@@ -683,6 +734,9 @@ document.getElementById('togHotspot').onchange = function() {
 document.getElementById('togBathy').onchange = function() {
     this.checked ? map.addLayer(bathyLayer) : map.removeLayer(bathyLayer);
 };
+document.getElementById('togChl').onchange = function() {
+    this.checked ? map.addLayer(chlLayer) : map.removeLayer(chlLayer);
+};
 document.getElementById('togSeamap').onchange = function() {
     this.checked ? map.addLayer(seamap) : map.removeLayer(seamap);
 };
@@ -699,6 +753,9 @@ document.getElementById('bathyOpacity').oninput = function() {
 };
 document.getElementById('seamapOpacity').oninput = function() {
     seamap.setOpacity(this.value / 100);
+};
+document.getElementById('chlOpacity').oninput = function() {
+    if (DATA) renderChlorophyll(DATA);
 };
 </script>
 </body>

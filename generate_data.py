@@ -152,6 +152,78 @@ def generate_bathymetry_contours():
         return []
 
 
+def download_chlorophyll(date_str):
+    """下载VIIRS NRT叶绿素数据 (gapfilled, 9km)"""
+    out = f'/tmp/chl_nrt_{date_str}.csv'
+    if os.path.exists(out) and os.path.getsize(out) > 500:
+        return out
+    ds = 'nesdisVHNnoaaSNPPnoaa20NRTchlaGapfilledDaily'
+    url = (
+        f"https://coastwatch.pfeg.noaa.gov/erddap/griddap/{ds}.csv"
+        f"?chlor_a[({date_str}T12:00:00Z)][(0.0)]"
+        f"[({LAT_MIN}):1:({LAT_MAX})]"
+        f"[({LON_MIN}):1:({LON_MAX})]"
+    )
+    print(f"  下载叶绿素 (VIIRS NRT, {date_str})...")
+    req = urllib.request.Request(url, headers={'User-Agent': 'FishFinder/1.0'})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = resp.read().decode('utf-8')
+        with open(out, 'w') as f:
+            f.write(data)
+        return out
+    except Exception as e:
+        print(f"  ⚠️ 叶绿素下载失败: {e}")
+        # Try 1 day earlier
+        from datetime import timedelta
+        d = datetime.date.fromisoformat(date_str) - timedelta(days=1)
+        url2 = url.replace(date_str, d.isoformat())
+        print(f"  重试 {d.isoformat()}...")
+        try:
+            req2 = urllib.request.Request(url2, headers={'User-Agent': 'FishFinder/1.0'})
+            with urllib.request.urlopen(req2, timeout=60) as resp2:
+                data2 = resp2.read().decode('utf-8')
+            out2 = f'/tmp/chl_nrt_{d.isoformat()}.csv'
+            with open(out2, 'w') as f:
+                f.write(data2)
+            return out2
+        except Exception as e2:
+            print(f"  ⚠️ 叶绿素仍然失败: {e2}")
+            return None
+
+
+def parse_chl_csv(filepath):
+    """解析叶绿素CSV (有额外的time和altitude列)"""
+    with open(filepath) as f:
+        lines = f.readlines()
+    header = lines[0].strip().split(',')
+    lat_col = lon_col = val_col = None
+    for i, h in enumerate(header):
+        h = h.strip().lower()
+        if 'latitude' in h: lat_col = i
+        elif 'longitude' in h: lon_col = i
+        elif 'chlor' in h: val_col = i
+
+    lats_r, lons_r, vals_r = [], [], []
+    for line in lines[2:]:
+        parts = line.strip().split(',')
+        try:
+            lat, lon = float(parts[lat_col]), float(parts[lon_col])
+            v = parts[val_col].strip()
+            val = float(v) if v not in ('NaN', '') else None
+            lats_r.append(lat); lons_r.append(lon); vals_r.append(val)
+        except: continue
+
+    ulats = sorted(set(lats_r))
+    ulons = sorted(set(lons_r))
+    grid = [[None]*len(ulons) for _ in range(len(ulats))]
+    lat_idx = {v:i for i,v in enumerate(ulats)}
+    lon_idx = {v:i for i,v in enumerate(ulons)}
+    for lat, lon, val in zip(lats_r, lons_r, vals_r):
+        grid[lat_idx[lat]][lon_idx[lon]] = val
+    return ulats, ulons, grid
+
+
 def generate(date_str=None):
     if date_str is None:
         date_str = (datetime.date.today() - datetime.timedelta(days=2)).isoformat()
@@ -282,6 +354,26 @@ def generate(date_str=None):
             'coverage_pct': round(pct, 0),
         })
 
+    # Chlorophyll
+    chl_points = []
+    chl_date = date_str
+    try:
+        chl_file = download_chlorophyll(date_str)
+        if chl_file:
+            clats, clons, cgrid = parse_chl_csv(chl_file)
+            for i, lat in enumerate(clats):
+                for j, lon in enumerate(clons):
+                    v = cgrid[i][j]
+                    if v is not None and v > 0:
+                        chl_points.append({
+                            'lat': round(lat, 3),
+                            'lon': round(lon, 3),
+                            'chl': round(v, 3),
+                        })
+            print(f"  ✅ 叶绿素: {len(chl_points)} 点")
+    except Exception as e:
+        print(f"  ⚠️ 叶绿素处理失败: {e}")
+
     # Bathymetry contours
     bathymetry = generate_bathymetry_contours()
 
@@ -300,6 +392,7 @@ def generate(date_str=None):
         'hotspots': hotspots,
         'isotherms': isotherms,
         'bathymetry': bathymetry,
+        'chlorophyll': chl_points,
         'sst_points': sst_points,
         'lats': [round(l, 3) for l in lats],
         'lons': [round(l, 3) for l in lons],
