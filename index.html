@@ -113,7 +113,7 @@ body { font-family: -apple-system, 'Helvetica Neue', Arial, sans-serif; backgrou
     </div>
     <div class="slider-row">
         <span class="slider-label">透明度</span>
-        <input type="range" id="sstOpacity" min="0" max="100" value="65">
+        <input type="range" id="sstOpacity" min="0" max="100" value="85">
     </div>
     <div class="layer-toggle">
         <input type="checkbox" id="togIsotherm" checked>
@@ -369,7 +369,7 @@ function renderBathymetry(d) {
         const line = L.polyline(latlngs, {
             color: color,
             weight: weight,
-            opacity: 0.6,
+            opacity: 0.85,
             dashArray: b.depth > -500 ? '4,4' : null,
         });
         line.bindPopup(`水深: <b>${Math.abs(b.depth)}m</b>`);
