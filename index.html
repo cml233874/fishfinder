@@ -167,11 +167,32 @@ const map = L.map('map', {
     zoomControl: true,
 });
 
-// 底图: CartoDB dark (海洋用暗色好看)
+// 底图选项
 const baseDark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
     attribution: '&copy; CartoDB &copy; OSM',
     maxZoom: 18,
-}).addTo(map);
+});
+
+const baseSat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    attribution: '&copy; Esri, Maxar, Earthstar Geographics',
+    maxZoom: 18,
+});
+
+const baseOcean = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}', {
+    attribution: '&copy; Esri, GEBCO, NOAA',
+    maxZoom: 13,
+});
+
+// 默认用卫星图
+baseSat.addTo(map);
+
+// 底图切换控件
+const baseMaps = {
+    '🛰️ 卫星图': baseSat,
+    '🌑 暗色': baseDark,
+    '🌊 海洋': baseOcean,
+};
+L.control.layers(baseMaps, null, {position: 'topleft', collapsed: true}).addTo(map);
 
 // OpenSeaMap叠加
 const seamap = L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
