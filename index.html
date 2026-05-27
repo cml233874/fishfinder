@@ -18,8 +18,34 @@ body { font-family: -apple-system, 'Helvetica Neue', Arial, sans-serif; backgrou
     padding: 14px 16px; min-width: 260px; max-width: 320px;
     backdrop-filter: blur(10px); box-shadow: 0 4px 20px rgba(0,0,0,0.5);
     font-size: 13px; max-height: 90vh; overflow-y: auto;
+    transition: transform 0.3s ease, opacity 0.3s ease;
 }
-.panel h2 { font-size: 16px; margin-bottom: 8px; color: #ffd700; }
+.panel.collapsed {
+    transform: translateX(calc(100% + 20px));
+    opacity: 0;
+    pointer-events: none;
+}
+.panel h2 { font-size: 16px; margin-bottom: 8px; color: #ffd700; display: flex; justify-content: space-between; align-items: center; }
+
+/* 收起/展开按钮 */
+.panel-toggle {
+    position: absolute; top: 14px; right: 14px; z-index: 1001;
+    width: 40px; height: 40px; border-radius: 50%;
+    background: rgba(20,20,40,0.92); border: 2px solid #ffd700;
+    color: #ffd700; font-size: 18px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    backdrop-filter: blur(10px); box-shadow: 0 2px 10px rgba(0,0,0,0.4);
+    transition: all 0.3s ease;
+}
+.panel-toggle:hover { background: rgba(255,215,0,0.2); }
+.panel-toggle.hidden { display: none; }
+/* 手机端面板宽度 */
+@media (max-width: 600px) {
+    .panel { min-width: 220px; max-width: 280px; right: 6px; top: 6px; font-size: 12px; padding: 10px 12px; }
+    .panel-toggle { top: 10px; right: 10px; width: 36px; height: 36px; font-size: 16px; }
+    .colorbar { bottom: 16px; padding: 6px 10px; }
+    .info-badge { left: 50px; font-size: 11px; padding: 6px 10px; }
+}
 .panel h3 { font-size: 13px; margin: 10px 0 4px; color: #aaa; text-transform: uppercase; letter-spacing: 1px; }
 .stat-row { display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
 .stat-label { color: #888; }
@@ -75,8 +101,9 @@ body { font-family: -apple-system, 'Helvetica Neue', Arial, sans-serif; backgrou
 
 <div class="info-badge" id="dateBadge">加载中...</div>
 
+<button class="panel-toggle hidden" id="panelShow" onclick="togglePanel(true)">☰</button>
 <div class="panel" id="panel">
-    <h2>🐟 AI Fish Finder</h2>
+    <h2>🐟 AI Fish Finder <span style="cursor:pointer;font-size:20px" onclick="togglePanel(false)">✕</span></h2>
     <div id="statsBox"></div>
 
     <h3>图层控制</h3>
@@ -95,6 +122,10 @@ body { font-family: -apple-system, 'Helvetica Neue', Arial, sans-serif; backgrou
     <div class="layer-toggle">
         <input type="checkbox" id="togHotspot" checked>
         <label for="togHotspot">热点标注</label>
+    </div>
+    <div class="layer-toggle">
+        <input type="checkbox" id="togBathy" checked>
+        <label for="togBathy">🌊 等深线</label>
     </div>
     <div class="layer-toggle">
         <input type="checkbox" id="togSeamap" checked>
@@ -116,10 +147,23 @@ body { font-family: -apple-system, 'Helvetica Neue', Arial, sans-serif; backgrou
 </div>
 
 <script>
+// ── 侧边栏收起/展开 ──
+function togglePanel(show) {
+    const panel = document.getElementById('panel');
+    const btn = document.getElementById('panelShow');
+    if (show) {
+        panel.classList.remove('collapsed');
+        btn.classList.add('hidden');
+    } else {
+        panel.classList.add('collapsed');
+        btn.classList.remove('hidden');
+    }
+}
+
 // ── 地图初始化 ──
 const map = L.map('map', {
-    center: [-34.5, 172.5],
-    zoom: 8,
+    center: [-34.3, 172.5],
+    zoom: 9,
     zoomControl: true,
 });
 
@@ -141,6 +185,7 @@ let sstLayer = L.layerGroup().addTo(map);
 let isothermLayer = L.layerGroup().addTo(map);
 let hotspotLayer = L.layerGroup().addTo(map);
 let landmarkLayer = L.layerGroup().addTo(map);
+let bathyLayer = L.layerGroup().addTo(map);
 
 // ── 颜色映射 ──
 function sstColor(t, min, max) {
@@ -210,6 +255,9 @@ function render(d) {
     // Isotherms
     renderIsotherms(d);
 
+    // Bathymetry
+    renderBathymetry(d);
+
     // Landmarks
     renderLandmarks(d);
 
@@ -277,13 +325,100 @@ function renderIsotherms(d) {
     });
 }
 
+function renderBathymetry(d) {
+    bathyLayer.clearLayers();
+    if (!d.bathymetry || d.bathymetry.length === 0) return;
+
+    const depthColors = {
+        0: '#8B7355',
+        '-100': '#87CEEB',
+        '-200': '#6CB4EE',
+        '-500': '#4A90D9',
+        '-1000': '#2E6EB5',
+        '-2000': '#1A4D8F',
+        '-3000': '#0D2F66',
+    };
+
+    d.bathymetry.forEach(b => {
+        const latlngs = b.coords.map(c => [c[1], c[0]]);
+        const color = depthColors[String(b.depth)] || '#4A90D9';
+        const weight = b.depth === -200 || b.depth === -1000 ? 2 : 1;
+        const line = L.polyline(latlngs, {
+            color: color,
+            weight: weight,
+            opacity: 0.6,
+            dashArray: b.depth > -500 ? '4,4' : null,
+        });
+        line.bindPopup(`水深: <b>${Math.abs(b.depth)}m</b>`);
+        bathyLayer.addLayer(line);
+
+        // 深度标签
+        if (latlngs.length > 5) {
+            const mid = latlngs[Math.floor(latlngs.length / 3)];
+            const label = L.marker(mid, {
+                icon: L.divIcon({
+                    className: '',
+                    html: `<span style="color:${color};font-size:9px;font-weight:bold;
+                           text-shadow:1px 1px 2px #000,-1px -1px 2px #000;
+                           white-space:nowrap">${Math.abs(b.depth)}m</span>`,
+                    iconSize: [35, 12],
+                    iconAnchor: [17, 6],
+                }),
+                interactive: false,
+            });
+            bathyLayer.addLayer(label);
+        }
+    });
+}
+
 function renderLandmarks(d) {
     landmarkLayer.clearLayers();
+
+    // Three Kings Islands 群岛详细标注
+    if (d.three_kings_islands) {
+        // 画一个圈框出群岛范围
+        const tkCircle = L.circle([-34.155, 172.13], {
+            radius: 8000,  // 8km
+            color: '#ff4444',
+            weight: 2,
+            opacity: 0.6,
+            fillColor: '#ff4444',
+            fillOpacity: 0.08,
+            dashArray: '8,6',
+        });
+        tkCircle.bindPopup('<b>🏝️ Three Kings Islands</b><br>Manawatāwhi / 三王群岛<br>6座岛屿，新西兰最北端');
+        landmarkLayer.addLayer(tkCircle);
+
+        // 每个岛的标注
+        for (const [name, info] of Object.entries(d.three_kings_islands)) {
+            const sz = info.size === 'large' ? 12 : info.size === 'medium' ? 8 : 5;
+            const islandMarker = L.circleMarker([info.lat, info.lon], {
+                radius: sz,
+                color: '#2ecc71',
+                weight: 2,
+                fillColor: '#27ae60',
+                fillOpacity: 0.7,
+            });
+            islandMarker.bindTooltip(name, {
+                permanent: info.size === 'large',
+                direction: 'right',
+                offset: [sz+4, 0],
+                className: '',
+            });
+            islandMarker.bindPopup(`<b>🏝️ ${name}</b>`);
+            landmarkLayer.addLayer(islandMarker);
+        }
+    }
+
+    // 其他地标
     for (const [name, info] of Object.entries(d.landmarks)) {
         let iconHtml, iconSize;
         if (name === 'Three Kings') {
-            iconHtml = `<div style="font-size:22px;text-shadow:0 0 6px rgba(255,0,0,0.8)">🎯</div>`;
-            iconSize = [26, 26];
+            // 用文字标签替代单个图标
+            iconHtml = `<div style="font-size:13px;font-weight:bold;color:#ff4444;
+                        text-shadow:1px 1px 2px #000,-1px -1px 2px #000;
+                        white-space:nowrap">🎯 Three Kings</div>`;
+            iconSize = [100, 18];
         } else if (info.icon === 'port') {
             iconHtml = `<div style="font-size:18px">⚓</div>`;
             iconSize = [22, 22];
@@ -300,12 +435,14 @@ function renderLandmarks(d) {
             }),
             zIndexOffset: 1000,
         });
-        marker.bindTooltip(name, {
-            permanent: name === 'Three Kings' || name === 'Mangonui',
-            direction: 'right',
-            offset: [12, 0],
-            className: '',
-        });
+        if (name !== 'Three Kings') {
+            marker.bindTooltip(name, {
+                permanent: name === 'Mangonui',
+                direction: 'right',
+                offset: [12, 0],
+                className: '',
+            });
+        }
         landmarkLayer.addLayer(marker);
     }
 }
@@ -381,6 +518,9 @@ document.getElementById('togIsotherm').onchange = function() {
 };
 document.getElementById('togHotspot').onchange = function() {
     this.checked ? map.addLayer(hotspotLayer) : map.removeLayer(hotspotLayer);
+};
+document.getElementById('togBathy').onchange = function() {
+    this.checked ? map.addLayer(bathyLayer) : map.removeLayer(bathyLayer);
 };
 document.getElementById('togSeamap').onchange = function() {
     this.checked ? map.addLayer(seamap) : map.removeLayer(seamap);

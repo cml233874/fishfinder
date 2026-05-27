@@ -19,6 +19,16 @@ LANDMARKS = {
     'Spirits Bay': {'lat': -34.44, 'lon': 172.82, 'icon': 'cape'},
 }
 
+# Three Kings Islands 各岛精确坐标
+THREE_KINGS_ISLANDS = {
+    'Great Island (Manawatāwhi)': {'lat': -34.157, 'lon': 172.138, 'size': 'large'},
+    'North East Island': {'lat': -34.133, 'lon': 172.167, 'size': 'medium'},
+    'South West Island': {'lat': -34.170, 'lon': 172.108, 'size': 'medium'},
+    'West Island': {'lat': -34.150, 'lon': 172.083, 'size': 'small'},
+    'Farmer Rocks': {'lat': -34.113, 'lon': 172.150, 'size': 'small'},
+    'Princes Islands': {'lat': -34.190, 'lon': 172.100, 'size': 'small'},
+}
+
 SPECIES = {
     'Southern Bluefin': {'min': 14, 'max': 20, 'cn': '蓝鳍金枪'},
     'Bigeye Tuna': {'min': 17, 'max': 22, 'cn': '大目金枪'},
@@ -74,6 +84,72 @@ def parse_csv(filepath):
     for lat, lon, val in zip(lats_r, lons_r, vals_r):
         grid[lat_idx[lat]][lon_idx[lon]] = val
     return ulats, ulons, grid
+
+
+def download_bathy():
+    """下载ETOPO水深数据(etopo180)"""
+    out = '/tmp/bathy_web_tk.csv'
+    if os.path.exists(out) and os.path.getsize(out) > 500:
+        return out
+    # etopo180: ~10 arc-min resolution; stride=1 for this small area
+    url = (
+        f"https://coastwatch.pfeg.noaa.gov/erddap/griddap/etopo180.csv"
+        f"?altitude[({LAT_MIN}):1:({LAT_MAX})]"
+        f"[({LON_MIN}):1:({LON_MAX})]"
+    )
+    print(f"  下载水深 (ETOPO)...")
+    req = urllib.request.Request(url, headers={'User-Agent': 'FishFinder/0.5'})
+    with urllib.request.urlopen(req, timeout=90) as resp:
+        data = resp.read().decode('utf-8')
+    with open(out, 'w') as f:
+        f.write(data)
+    return out
+
+
+def generate_bathymetry_contours():
+    """生成等深线"""
+    try:
+        bathy_file = download_bathy()
+        blats, blons, bgrid = parse_csv(bathy_file)
+        np_bathy = np.array([[v if v is not None else np.nan for v in row] for row in bgrid])
+        
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+        
+        lon_mesh, lat_mesh = np.meshgrid(blons, blats)
+        # 等深线级别: -100, -200, -500, -1000, -2000, -3000m
+        levels = [-3000, -2000, -1000, -500, -200, -100, 0]
+        
+        fig, ax = plt.subplots()
+        cs = ax.contour(lon_mesh, lat_mesh, np_bathy, levels=levels)
+        
+        contours = []
+        for i, level in enumerate(cs.levels):
+            paths = cs.allsegs[i] if hasattr(cs, 'allsegs') else []
+            if not paths:
+                # fallback for older matplotlib
+                try:
+                    coll = cs.collections[i]
+                    paths = [p.vertices for p in coll.get_paths()]
+                except:
+                    continue
+            for seg in paths:
+                if hasattr(seg, 'tolist'):
+                    coords = [[round(float(v[0]), 4), round(float(v[1]), 4)] for v in seg]
+                else:
+                    coords = [[round(float(v[0]), 4), round(float(v[1]), 4)] for v in seg]
+                if len(coords) > 2:
+                    contours.append({
+                        'depth': int(level),
+                        'coords': coords,
+                    })
+        plt.close(fig)
+        print(f"  ✅ 等深线: {len(contours)} 条")
+        return contours
+    except Exception as e:
+        print(f"  ⚠️ 等深线生成失败: {e}")
+        return []
 
 
 def generate(date_str=None):
@@ -206,6 +282,9 @@ def generate(date_str=None):
             'coverage_pct': round(pct, 0),
         })
 
+    # Bathymetry contours
+    bathymetry = generate_bathymetry_contours()
+
     # Build output
     output = {
         'date': date_str,
@@ -217,8 +296,10 @@ def generate(date_str=None):
         'stats': stats,
         'species': species_info,
         'landmarks': LANDMARKS,
+        'three_kings_islands': THREE_KINGS_ISLANDS,
         'hotspots': hotspots,
         'isotherms': isotherms,
+        'bathymetry': bathymetry,
         'sst_points': sst_points,
         'lats': [round(l, 3) for l in lats],
         'lons': [round(l, 3) for l in lons],
