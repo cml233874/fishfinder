@@ -87,19 +87,19 @@ def parse_csv(filepath):
 
 
 def download_bathy():
-    """下载ETOPO水深数据(etopo180)"""
-    out = '/tmp/bathy_web_tk.csv'
+    """下载SRTM15+水深数据 (15弧秒分辨率, ~460m)"""
+    out = '/tmp/bathy_srtm15_tk.csv'
     if os.path.exists(out) and os.path.getsize(out) > 500:
         return out
-    # etopo180: ~10 arc-min resolution; stride=1 for this small area
+    # SRTM15+ via ERDDAP, stride=4 (~1 arc-min, ~1.8km) for contour generation
     url = (
-        f"https://coastwatch.pfeg.noaa.gov/erddap/griddap/etopo180.csv"
-        f"?altitude[({LAT_MIN}):1:({LAT_MAX})]"
-        f"[({LON_MIN}):1:({LON_MAX})]"
+        f"https://coastwatch.pfeg.noaa.gov/erddap/griddap/srtm15plus.csv"
+        f"?z[({LAT_MIN}):4:({LAT_MAX})]"
+        f"[({LON_MIN}):4:({LON_MAX})]"
     )
-    print(f"  下载水深 (ETOPO)...")
-    req = urllib.request.Request(url, headers={'User-Agent': 'FishFinder/0.5'})
-    with urllib.request.urlopen(req, timeout=90) as resp:
+    print(f"  下载水深 (SRTM15+, 1弧分)...")
+    req = urllib.request.Request(url, headers={'User-Agent': 'FishFinder/1.0'})
+    with urllib.request.urlopen(req, timeout=120) as resp:
         data = resp.read().decode('utf-8')
     with open(out, 'w') as f:
         f.write(data)
@@ -118,8 +118,8 @@ def generate_bathymetry_contours():
         import matplotlib.pyplot as plt
         
         lon_mesh, lat_mesh = np.meshgrid(blons, blats)
-        # 等深线级别: -100, -200, -500, -1000, -2000, -3000m
-        levels = [-3000, -2000, -1000, -500, -200, -100, 0]
+        # 等深线级别: 更细致，利用SRTM15+高分辨率
+        levels = [-3000, -2000, -1500, -1000, -500, -200, -100, -50, 0]
         
         fig, ax = plt.subplots()
         cs = ax.contour(lon_mesh, lat_mesh, np_bathy, levels=levels)

@@ -352,10 +352,12 @@ function renderBathymetry(d) {
 
     const depthColors = {
         0: '#8B7355',
+        '-50': '#B0E0E6',
         '-100': '#87CEEB',
         '-200': '#6CB4EE',
         '-500': '#4A90D9',
         '-1000': '#2E6EB5',
+        '-1500': '#1F5DA0',
         '-2000': '#1A4D8F',
         '-3000': '#0D2F66',
     };
@@ -363,7 +365,7 @@ function renderBathymetry(d) {
     d.bathymetry.forEach(b => {
         const latlngs = b.coords.map(c => [c[1], c[0]]);
         const color = depthColors[String(b.depth)] || '#4A90D9';
-        const weight = b.depth === -200 || b.depth === -1000 ? 2 : 1;
+        const weight = b.depth === -200 || b.depth === -1000 ? 2.5 : b.depth === -50 ? 1 : 1.5;
         const line = L.polyline(latlngs, {
             color: color,
             weight: weight,
