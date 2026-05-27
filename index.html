@@ -112,12 +112,16 @@ body { font-family: -apple-system, 'Helvetica Neue', Arial, sans-serif; backgrou
         <label for="togSST">SST 海温热力图</label>
     </div>
     <div class="slider-row">
-        <span class="slider-label">透明度</span>
+        <span class="slider-label">SST 透明度</span>
         <input type="range" id="sstOpacity" min="0" max="100" value="85">
     </div>
     <div class="layer-toggle">
         <input type="checkbox" id="togIsotherm" checked>
         <label for="togIsotherm">等温线</label>
+    </div>
+    <div class="slider-row">
+        <span class="slider-label">等温线 透明度</span>
+        <input type="range" id="isothermOpacity" min="0" max="100" value="70">
     </div>
     <div class="layer-toggle">
         <input type="checkbox" id="togHotspot" checked>
@@ -127,9 +131,17 @@ body { font-family: -apple-system, 'Helvetica Neue', Arial, sans-serif; backgrou
         <input type="checkbox" id="togBathy" checked>
         <label for="togBathy">🌊 等深线</label>
     </div>
+    <div class="slider-row">
+        <span class="slider-label">等深线 透明度</span>
+        <input type="range" id="bathyOpacity" min="0" max="100" value="85">
+    </div>
     <div class="layer-toggle">
         <input type="checkbox" id="togSeamap" checked>
         <label for="togSeamap">OpenSeaMap 航海图</label>
+    </div>
+    <div class="slider-row">
+        <span class="slider-label">航海图 透明度</span>
+        <input type="range" id="seamapOpacity" min="0" max="100" value="80">
     </div>
 
     <h3>鱼种适宜度</h3>
@@ -320,10 +332,11 @@ function renderIsotherms(d) {
     isothermLayer.clearLayers();
     d.isotherms.forEach(iso => {
         const latlngs = iso.coords.map(c => [c[1], c[0]]); // [lat, lon]
+        const isoOp = document.getElementById('isothermOpacity').value / 100;
         const line = L.polyline(latlngs, {
             color: '#fff',
             weight: 1.5,
-            opacity: 0.7,
+            opacity: isoOp,
             dashArray: '6,4',
         });
         // 添加温度标签
@@ -366,10 +379,11 @@ function renderBathymetry(d) {
         const latlngs = b.coords.map(c => [c[1], c[0]]);
         const color = depthColors[String(b.depth)] || '#4A90D9';
         const weight = b.depth === -200 || b.depth === -1000 ? 2.5 : b.depth === -50 ? 1 : 1.5;
+        const bathOp = document.getElementById('bathyOpacity').value / 100;
         const line = L.polyline(latlngs, {
             color: color,
             weight: weight,
-            opacity: 0.85,
+            opacity: bathOp,
             dashArray: b.depth > -500 ? '4,4' : null,
         });
         line.bindPopup(`水深: <b>${Math.abs(b.depth)}m</b>`);
@@ -552,6 +566,15 @@ document.getElementById('togSeamap').onchange = function() {
 // 透明度滑块
 document.getElementById('sstOpacity').oninput = function() {
     if (DATA) renderSST(DATA);
+};
+document.getElementById('isothermOpacity').oninput = function() {
+    if (DATA) renderIsotherms(DATA);
+};
+document.getElementById('bathyOpacity').oninput = function() {
+    if (DATA) renderBathymetry(DATA);
+};
+document.getElementById('seamapOpacity').oninput = function() {
+    seamap.setOpacity(this.value / 100);
 };
 </script>
 </body>
