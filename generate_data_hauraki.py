@@ -252,7 +252,7 @@ def generate(date_str=None):
         pts = np.column_stack([lat_mesh_sst.ravel(), lon_mesh_sst.ravel()])
         bathy_on_sst = bathy_interp(pts).reshape(np_grid.shape)
         # 陆地/浅滩掩膜: 水深 > -10m（即陆地或<10m浅水）排除
-        ocean_mask = bathy_on_sst < -10
+        ocean_mask = bathy_on_sst < -20  # 更严格：排除 < 20m 浅水区
         print(f"  ✅ 海洋掩膜: {ocean_mask.sum()} / {ocean_mask.size} 点 ({100*ocean_mask.sum()/ocean_mask.size:.0f}%)")
     except Exception as e:
         print(f"  ⚠️ 海洋掩膜失败，跳过: {e}")
@@ -317,8 +317,14 @@ def generate(date_str=None):
     except Exception as e:
         print(f"  等温线生成失败: {e}")
 
-    # Hotspots
+    # Hotspots — 额外过滤：距陆地太近的点排除（缓冲5nm ≈ 0.083度）
+    SHORE_BUFFER_DEG = 0.08  # ~5nm
+    # 用水深掩膜腐蚀得到深水区掩膜
+    from scipy.ndimage import binary_erosion
+    eroded_mask = binary_erosion(ocean_mask, iterations=3) if ocean_mask.any() else ocean_mask
+
     sc = score.copy()
+    sc[~eroded_mask] = np.nan
     sc[np.isnan(sc)] = -1
     top_idx = np.argsort(sc.flatten())[-10:][::-1]
     hotspots = []
