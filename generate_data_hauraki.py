@@ -236,14 +236,36 @@ def generate(date_str=None):
     else:
         grid = [[round(v,2) if v else None for v in row] for row in grid]
 
+    # 构建水深掩膜 — 只保留真实海洋区域（水深 < -5m）
+    ocean_mask = np.ones_like(np_grid, dtype=bool)  # default: all valid
+    try:
+        bathy_file = download_bathy()
+        blats, blons, bgrid = parse_csv(bathy_file)
+        np_bathy = np.array([[v if v is not None else 0 for v in row] for row in bgrid])
+        # 插值水深到SST网格
+        from scipy.interpolate import RegularGridInterpolator
+        bathy_interp = RegularGridInterpolator(
+            (np.array(blats), np.array(blons)), np_bathy,
+            method='nearest', bounds_error=False, fill_value=0
+        )
+        lat_mesh_sst, lon_mesh_sst = np.meshgrid(lats, lons, indexing='ij')
+        pts = np.column_stack([lat_mesh_sst.ravel(), lon_mesh_sst.ravel()])
+        bathy_on_sst = bathy_interp(pts).reshape(np_grid.shape)
+        # 陆地/浅滩掩膜: 水深 > -10m（即陆地或<10m浅水）排除
+        ocean_mask = bathy_on_sst < -10
+        print(f"  ✅ 海洋掩膜: {ocean_mask.sum()} / {ocean_mask.size} 点 ({100*ocean_mask.sum()/ocean_mask.size:.0f}%)")
+    except Exception as e:
+        print(f"  ⚠️ 海洋掩膜失败，跳过: {e}")
+
     # Gradient
     filled = np.where(np.isnan(np_grid), np.nanmean(np_grid), np_grid)
     smoothed = gaussian_filter(filled, sigma=1.5)
     gy, gx = np.gradient(smoothed)
     grad = np.sqrt(gx**2 + gy**2)
     grad[np.isnan(np_grid)] = np.nan
+    grad[~ocean_mask] = np.nan  # 陆地排除
 
-    # Score
+    # Score — 只在真实海洋区域评分
     score = np.zeros_like(np_grid)
     mx = np.nanmax(grad)
     if mx > 0: score += (grad/mx) * 60
@@ -253,6 +275,7 @@ def generate(date_str=None):
     temp_s /= len(SPECIES)
     score += temp_s * 40
     score[np.isnan(np_grid)] = np.nan
+    score[~ocean_mask] = np.nan  # 陆地排除
     smx = np.nanmax(score)
     if smx > 0: score = score/smx*100
 
