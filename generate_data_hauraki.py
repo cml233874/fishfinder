@@ -317,6 +317,69 @@ def generate(date_str=None):
     except Exception as e:
         print(f"  等温线生成失败: {e}")
 
+    # ======================================================
+    # 双重断层叠加区 (Thermal + Bathymetric Front Overlap)
+    # 条件：SST梯度 > 75百分位 AND 水深在关键断层附近（40-120m之间）
+    # ======================================================
+    dual_front_zones = []
+    try:
+        from scipy.interpolate import RegularGridInterpolator
+        bathy_file_df = download_bathy()
+        blats_df, blons_df, bgrid_df = parse_csv(bathy_file_df)
+        np_bathy_df = np.array([[v if v is not None else 0 for v in row] for row in bgrid_df])
+        bathy_interp_df = RegularGridInterpolator(
+            (np.array(blats_df), np.array(blons_df)), np_bathy_df,
+            method='nearest', bounds_error=False, fill_value=0
+        )
+        lat_mesh_df, lon_mesh_df = np.meshgrid(lats, lons, indexing='ij')
+        pts_df = np.column_stack([lat_mesh_df.ravel(), lon_mesh_df.ravel()])
+        bathy_on_sst_df = bathy_interp_df(pts_df).reshape(np_grid.shape)
+
+        # 水深断层：40-150m之间（礁石边缘、大陆架边坡）
+        bathy_front_mask = (bathy_on_sst_df >= -150) & (bathy_on_sst_df <= -40)
+
+        # SST热力断层：梯度 > 70百分位
+        grad_threshold = np.nanpercentile(grad[ocean_mask], 70) if ocean_mask.any() else 0
+        thermal_front_mask = grad > grad_threshold
+
+        # 双重叠加区
+        dual_mask = bathy_front_mask & thermal_front_mask & ocean_mask & ~np.isnan(np_grid)
+
+        # 找叠加区中高分点作为标注
+        dual_score = score.copy()
+        dual_score[~dual_mask] = np.nan
+        valid_dual = np.argwhere(~np.isnan(dual_score))
+
+        if len(valid_dual) > 0:
+            # 用网格化方式找代表性点（防止聚堆），分成4x4网格各取最高分
+            lat_bins = np.linspace(min(lats), max(lats), 5)
+            lon_bins = np.linspace(min(lons), max(lons), 5)
+            for li in range(4):
+                for lj in range(4):
+                    zone_mask = dual_mask.copy()
+                    zone_mask &= (lat_mesh_df >= lat_bins[li]) & (lat_mesh_df < lat_bins[li+1])
+                    zone_mask &= (lon_mesh_df >= lon_bins[lj]) & (lon_mesh_df < lon_bins[lj+1])
+                    if not zone_mask.any(): continue
+                    zone_score = score.copy()
+                    zone_score[~zone_mask] = np.nan
+                    if np.nanmax(zone_score) < 20: continue
+                    best = np.nanargmax(zone_score)
+                    row_d, col_d = np.unravel_index(best, zone_score.shape)
+                    depth_val = float(bathy_on_sst_df[row_d, col_d])
+                    sst_val = float(np_grid[row_d, col_d])
+                    grad_val = float(grad[row_d, col_d])
+                    dual_front_zones.append({
+                        'lat': round(float(lats[row_d]), 3),
+                        'lon': round(float(lons[col_d]), 3),
+                        'sst': round(sst_val, 1),
+                        'depth': round(depth_val, 0),
+                        'score': round(float(score[row_d, col_d]), 0),
+                        'grad': round(grad_val, 4),
+                    })
+        print(f"  ✅ 双重断层叠加区: {len(dual_front_zones)} 个标注点")
+    except Exception as e:
+        print(f"  ⚠️ 双重断层计算失败: {e}")
+
     # Hotspots — 额外过滤：距陆地太近的点排除（缓冲5nm ≈ 0.083度）
     SHORE_BUFFER_DEG = 0.08  # ~5nm
     # 用水深掩膜腐蚀得到深水区掩膜
@@ -415,6 +478,7 @@ def generate(date_str=None):
         'landmarks': LANDMARKS,
         'landmarks_extra': THREE_KINGS_ISLANDS,
         'hotspots': hotspots,
+        'dual_front_zones': dual_front_zones,
         'isotherms': isotherms,
         'bathymetry': bathymetry,
         'chlorophyll': chl_points,

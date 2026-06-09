@@ -9,6 +9,10 @@
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: -apple-system, 'Helvetica Neue', Arial, sans-serif; background: #1a1a2e; color: #eee; }
+@keyframes pulse-glow {
+    0%, 100% { box-shadow: 0 0 12px rgba(0,255,136,0.7), 0 0 24px rgba(0,136,255,0.4); }
+    50% { box-shadow: 0 0 20px rgba(0,255,136,1), 0 0 40px rgba(0,136,255,0.8); }
+}
 #map { width: 100%; height: 100vh; }
 .sat-tiles { filter: brightness(1.3) contrast(1.2) saturate(1.3); }
 
@@ -157,6 +161,10 @@ body { font-family: -apple-system, 'Helvetica Neue', Arial, sans-serif; backgrou
     <div class="slider-row">
         <span class="slider-label">叶绿素 透明度</span>
         <input type="range" id="chlOpacity" min="0" max="100" value="60">
+    </div>
+    <div class="layer-toggle">
+        <input type="checkbox" id="dualFrontToggle" checked>
+        <label for="dualFrontToggle" style="color:#00ff88;font-weight:600">★ 双重断层叠加区</label>
     </div>
     <div class="layer-toggle">
         <input type="checkbox" id="togSeamap" checked>
@@ -352,6 +360,7 @@ let hotspotLayer = L.layerGroup().addTo(map);
 let landmarkLayer = L.layerGroup().addTo(map);
 let bathyLayer = L.layerGroup().addTo(map);
 let chlLayer = L.layerGroup();
+let dualFrontLayer = L.layerGroup().addTo(map); // 双重断层叠加区
 
 // ── 颜色映射 ──
 function sstColor(t, min, max) {
@@ -432,6 +441,68 @@ function render(d) {
 
     // Hotspots
     renderHotspots(d);
+
+    // 双重断层叠加区
+    renderDualFronts(d);
+}
+
+function renderDualFronts(d) {
+    dualFrontLayer.clearLayers();
+    if (!d.dual_front_zones || d.dual_front_zones.length === 0) return;
+
+    const show = document.getElementById('dualFrontToggle').checked;
+    if (!show) return;
+
+    d.dual_front_zones.forEach((z, i) => {
+        // 外圈：脆綠色脉冲圆
+        const pulse = L.circle([z.lat, z.lon], {
+            radius: 4500,
+            color: '#00ff88',
+            weight: 2.5,
+            opacity: 0.85,
+            fillColor: '#00ff88',
+            fillOpacity: 0.12,
+            dashArray: '6,4',
+        });
+
+        // 中心图标
+        const marker = L.marker([z.lat, z.lon], {
+            icon: L.divIcon({
+                className: '',
+                html: `<div style="
+                    width: 36px; height: 36px;
+                    background: linear-gradient(135deg, #00ff88, #0088ff);
+                    border: 2px solid #fff;
+                    border-radius: 50%;
+                    display: flex; align-items: center; justify-content: center;
+                    font-size: 16px;
+                    box-shadow: 0 0 12px rgba(0,255,136,0.7), 0 0 24px rgba(0,136,255,0.4);
+                    animation: pulse-glow 2s infinite;
+                ">★</div>`,
+                iconSize: [36, 36],
+                iconAnchor: [18, 18],
+            }),
+            zIndexOffset: 3000,
+        });
+
+        marker.bindPopup(`
+            <div style="min-width:200px">
+                <b style="font-size:15px;color:#00ff88">★ 双重断层 叠加区</b><br>
+                <hr style="border-color:#333;margin:4px 0">
+                <span style="color:#ff8800">🌡 SST热力断层</span> + <span style="color:#4fc3f7">🌊水深断层</span><br>
+                <hr style="border-color:#333;margin:4px 0">
+                🌡 水温: <b>${z.sst}°C</b><br>
+                📊 水深: <b>${Math.abs(z.depth)}m</b><br>
+                📈 评分: <b>${z.score}</b>/100<br>
+                📍 (${z.lat}, ${z.lon})<br>
+                <hr style="border-color:#333;margin:4px 0">
+                <small style="color:#aaa">温度断层与水深地形断层同时存在——大鱼群聚集最高概率区域</small>
+            </div>
+        `, {maxWidth: 240});
+
+        dualFrontLayer.addLayer(pulse);
+        dualFrontLayer.addLayer(marker);
+    });
 }
 
 function renderSST(d) {
@@ -694,8 +765,8 @@ function renderHotspots(d) {
                 🌡 SST: <b>${h.sst}°C</b><br>
                 📊 评分: <b>${h.score}</b>/100 ${front}<br>
                 📍 (${h.lat}, ${h.lon})<br>
-                📏 距TK: <b>${h.dist_tk_nm}nm</b><br>
-                ⚓ 距Mangonui: <b>${h.dist_mg_nm}nm</b><br>
+                📏 距Auckland: <b>${h.dist_akl_nm !== undefined ? h.dist_akl_nm : '?'}nm</b><br>
+                ⚓ 距Coromandel: <b>${h.dist_cor_nm !== undefined ? h.dist_cor_nm : '?'}nm</b><br>
                 <hr style="border-color:#333;margin:4px 0">
                 <b>适宜鱼种:</b><br>
                 ${species || '无匹配'}
@@ -711,7 +782,7 @@ function renderHotspots(d) {
                 <span>${h.sst}°C</span>
                 <span style="color:#888">评分${h.score}</span>
                 <div class="hotspot-detail">
-                    距TK ${h.dist_tk_nm}nm | 距港${h.dist_mg_nm}nm
+                    距AKL ${h.dist_akl_nm !== undefined ? h.dist_akl_nm : '?'}nm | 距COR ${h.dist_cor_nm !== undefined ? h.dist_cor_nm : '?'}nm
                     ${h.is_thermal_front ? ' | 🌊断层' : ''}
                 </div>
             </div>
@@ -739,6 +810,15 @@ document.getElementById('togChl').onchange = function() {
 };
 document.getElementById('togSeamap').onchange = function() {
     this.checked ? map.addLayer(seamap) : map.removeLayer(seamap);
+};
+document.getElementById('dualFrontToggle').onchange = function() {
+    if (this.checked) {
+        map.addLayer(dualFrontLayer);
+        if (DATA) renderDualFronts(DATA);
+    } else {
+        dualFrontLayer.clearLayers();
+        map.removeLayer(dualFrontLayer);
+    }
 };
 
 // 透明度滑块
